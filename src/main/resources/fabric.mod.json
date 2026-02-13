@@ -1,0 +1,41 @@
+{
+	"schemaVersion": 1,
+	"id": "steam_p2p",
+	"version": "${version}",
+	"name": "steam_p2p",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/steam_p2p/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"steam_with_druzya.Steam_p2p"
+		],
+		"client": [
+			"steam_with_druzya.Steam_p2pClient"
+		],
+		"fabric-datagen": [
+			"steam_with_druzya.Steam_p2pDataGenerator"
+		]
+	},
+	"mixins": [
+		"steam_p2p.mixins.json",
+		{
+			"config": "steam_p2p.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.18.4",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	}
+}

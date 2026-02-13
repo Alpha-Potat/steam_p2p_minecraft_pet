@@ -16,7 +16,7 @@
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"steam_with_druzya.Steam_p2p"
+			"steam_with_druzya.YourMod"
 		],
 		"client": [
 			"steam_with_druzya.Steam_p2pClient"

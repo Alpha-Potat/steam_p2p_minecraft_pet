@@ -1,0 +1,33 @@
+# Steam SDK
+sdk/
+
+# generated sources
+java-wrapper/src/main/native/com_codedisaster_steamworks_*
+server/src/main/native/com_codedisaster_steamworks_*
+
+# output
+build/
+obj/
+target/
+Makefile
+*.exp
+*.lib
+*.make
+*.sln
+*.vcxproj
+*.vcxproj.*
+*.xcodeproj/
+*.xcworkspace
+
+# IDE files
+.idea/
+*.iml
+
+# build tools
+build-natives/.vs/
+build-natives/bin/
+premake5*
+
+# test resources
+steam_appid.txt
+encryptedappticket.key

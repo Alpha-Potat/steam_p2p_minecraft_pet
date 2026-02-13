@@ -1,14 +1,16 @@
 package steam_with_druzya;
 
-import net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback;
-import net.minecraft.server.command.CommandManager;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
-
 import com.codedisaster.steamworks.*;
 import com.codedisaster.steamworks.SteamNetworking.P2PSessionError;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback; // Updated to v2
+import net.minecraft.server.command.CommandManager;
+import net.minecraft.server.command.ServerCommandSource;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.function.Supplier;
 
 public class YourMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("steam_with_druzya");
@@ -52,6 +54,21 @@ public class YourMod implements ModInitializer {
         } catch (SteamException e) {
             LOGGER.error("Steam init exception: ", e);
         }
-        
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(CommandManager.literal("hostlobby")
+                .executes(ctx -> {
+                    SteamManager.INSTANCE.hostLobby(8);  // 8 слотов
+                    ctx.getSource().sendFeedback(() -> Text.literal("Steam lobby created! ID: " + SteamManager.INSTANCE.getLobbyID()), false);
+                    return 1;
+                })
+                .then(CommandManager.argument("slots", IntegerArgumentType.integer(2, 32))
+                    .executes(ctx -> {
+                        int slots = IntegerArgumentType.getInteger(ctx, "slots");
+                        SteamManager.INSTANCE.hostLobby(slots);
+                        ctx.getSource().sendFeedback(() -> Text.literal("Steam lobby created! ID: " + SteamManager.INSTANCE.getLobbyID()), false);
+                        return 1;
+                    })));
+        });
     }
 }

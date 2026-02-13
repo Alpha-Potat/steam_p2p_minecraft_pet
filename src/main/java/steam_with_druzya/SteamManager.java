@@ -1,162 +1,134 @@
 package steam_with_druzya;
 
 import com.codedisaster.steamworks.*;
-import com.codedisaster.steamworks.SteamMatchmaking.ChatMemberStateChange;
-import com.codedisaster.steamworks.SteamMatchmaking.ChatEntryType;
 import com.codedisaster.steamworks.SteamMatchmaking.LobbyType;
+import com.codedisaster.steamworks.SteamNetworking.P2PSend;
+import com.codedisaster.steamworks.SteamNetworking.P2PSessionError;
 import io.netty.buffer.Unpooled;
 import net.minecraft.network.PacketByteBuf;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.text.Text;
-
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-//ты хуле пиздешь тут дура?
-//маму твою ебу просто
 
 public class SteamManager {
-    public static final SteamManager INSTANCE = new SteamManager();
-    private static final Logger LOGGER = YourMod.LOGGER;
-    private static final int CHANNEL = 1;
-    private static final int BUFFER_SIZE = 4096;
-
+    public static final Logger LOGGER = LoggerFactory.getLogger("steam_with_druzya");
     private SteamNetworking networking;
     private SteamMatchmaking matchmaking;
-    private SteamUser user;
-    private MinecraftServer server;
-    private final Map<SteamID, SteamConnection> connections = new ConcurrentHashMap<>();
-    private SteamID lobbyID;
-    private ScheduledExecutorService pollExecutor;
+    private SteamID lobbyID;  // ID текущего лобби (для хоста)
+    private final Map<SteamID, SteamClientConnection> connections = new HashMap<>();
+    private final ExecutorService pollExecutor = Executors.newSingleThreadExecutor();
 
-    public void init(SteamNetworking net, MinecraftServer srv) {
-        networking = net;
-        matchmaking = new SteamMatchmaking(new SteamMatchmakingCallbackAdapter());
-        user = new SteamUser(new SteamUserCallbackAdapter());
-        server = srv;
-        pollExecutor = Executors.newScheduledThreadPool(1);
-        pollExecutor.scheduleAtFixedRate(this::pollPackets, 0, 16, TimeUnit.MILLISECONDS);  // 60 TPS
-        LOGGER.info("SteamManager ready!");
-    }
-
-    public void hostLobby() {
-        matchmaking.createLobby(LobbyType.FriendsOnly, 8);
-    }
-
-    public void joinLobby(SteamID lobby) {
-        matchmaking.joinLobby(lobby);
-    }
-
-    public void acceptSession(SteamID remote) {
-        networking.acceptP2PSessionWithUser(remote);
-        connections.put(remote, new SteamConnection(remote, this));
-        if (server != null) {
-            server.getPlayerManager().broadcast(Text.literal("Player joined via Steam: " + remote), false);
-        }
-        LOGGER.info("Accepted P2P session: " + remote);
-    }
-
-    private void pollPackets() {
-        int[] size = new int[1];
-        while (networking.isP2PPacketAvailable(size, CHANNEL)) {
-            if (size[0] > BUFFER_SIZE) {
-                LOGGER.warn("Packet too large: " + size[0]);
-                continue;
+    public SteamManager() {  // ← Здесь была ошибка: убрали "steamManager()"
+        networking = new SteamNetworking(new SteamNetworkingCallback() {
+            @Override
+            public void onP2PSessionRequest(SteamID steamIDRemote) {
+                LOGGER.info("P2P session request from: " + steamIDRemote);
+                networking.acceptP2PSessionWithUser(steamIDRemote);
+                createConnectionForPeer(steamIDRemote);
             }
-            byte[] data = new byte[size[0]];
-            SteamID remote = new SteamID();
-            int[] bytesRead = new int[1];
-            int[] channelOut = new int[1];
-            SteamNetworking.P2PSessionError[] err = new SteamNetworking.P2PSessionError[1];
-            if (networking.readP2PPacket(remote, data, bytesRead, channelOut, err)) {
-                if (err[0] == SteamNetworking.P2PSessionError.None) {
-                    PacketByteBuf buf = new PacketByteBuf(Unpooled.wrappedBuffer(data, 0, bytesRead[0]));
-                    SteamConnection conn = connections.get(remote);
-                    if (conn != null) {
-                        conn.handlePacket(buf);
-                    }
+
+            @Override
+            public void onP2PSessionConnectFail(SteamID steamIDRemote, P2PSessionError sessionError) {
+                LOGGER.error("P2P connect fail to {}: {}", steamIDRemote, sessionError);
+            }
+        });
+
+        matchmaking = new SteamMatchmaking(new SteamMatchmakingCallback() {
+            @Override
+            public void onLobbyCreated(SteamResult result, SteamID steamIDLobby) {
+                if (result == SteamResult.OK) {
+                    lobbyID = steamIDLobby;
+                    LOGGER.info("Lobby created: " + lobbyID);
                 } else {
-                    LOGGER.error("P2P read error: " + err[0]);
+                    LOGGER.error("Lobby creation failed: " + result);
                 }
             }
-        }
+
+            @Override
+            public void onLobbyEntered(SteamID steamIDLobby, int chatPermissions, boolean blocked, SteamResult response)
+             {
+                LOGGER.info("Joined lobby: " + steamIDLobby + ", success: " + response);
+                // Здесь можно сохранить lobbyID = steamIDLobby; если нужно
+            }
+        });
     }
 
-    public void sendPacket(SteamID remote, PacketByteBuf buf) {
+    public void hostLobby(int maxPlayers) {
+        matchmaking.createLobby(LobbyType.Public, maxPlayers);
+    }
+
+    public void joinLobby(long lobbySteamIDLong) {
+        SteamID lobbySteamID = new SteamID().createFromNativeHandle(lobbySteamIDLong);           // Создаём пустой SteamID  // Устанавливаем значение (если метод существует)
+        // Альтернатива, если setFromUInt64 нет: используй matchmaking.joinLobby с уже существующим SteamID из другого источника
+        matchmaking.joinLobby(lobbySteamID);
+    }
+
+    public void sendPacket(SteamID remote, PacketByteBuf buf) throws SteamException {
         byte[] data = new byte[buf.readableBytes()];
         buf.readBytes(data);
-        networking.sendP2PPacket(remote, data, data.length, SteamNetworking.P2PSend.Reliable, CHANNEL);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+        networking.sendP2PPacket(remote, byteBuffer, P2PSend.ReliableWithBuffering, 0);
     }
 
-    // Getters
-    public SteamID getMyID() { return user.getSteamID(); }
-    public SteamID getLobbyID() { return lobbyID; }
-
-    private class SteamMatchmakingCallbackAdapter implements SteamMatchmakingCallback {
-        @Override
-        public void onFavoritesListChanged(int ip, int queryPort, int connPort, int appID, int flags, boolean add, int accountID) {}
-
-        @Override
-        public void onLobbyInvite(SteamID inviter, SteamID lobby, long gameID) {}
-
-        @Override
-        public void onLobbyEnter(SteamID lobby, int chatPermissions, boolean locked, SteamResult result) {}
-
-        @Override
-        public void onLobbyDataUpdate(SteamID lobby, SteamID member, boolean success) {}
-
-        @Override
-        public void onLobbyChatUpdate(SteamID lobby, SteamID userChanged, SteamID makingChange, ChatMemberStateChange stateChange) {}
-
-        @Override
-        public void onLobbyChatMessage(SteamID lobby, SteamID user, ChatEntryType entryType, int chatID) {}
-
-        @Override
-        public void onLobbyGameCreated(SteamID lobby, SteamID gameServer, int ip, short port) {}
-
-        @Override
-        public void onLobbyMatchList(int lobbiesMatching) {}
-
-        @Override
-        public void onLobbyKicked(SteamID lobby, SteamID admin, boolean dueToDisconnect) {}
-
-        @Override
-        public void onLobbyCreated(SteamResult result, SteamID lobby) {
-            if (result == SteamResult.OK) {
-                lobbyID = lobby;
-                LOGGER.info("Steam lobby created: " + lobbyID);
+    public void startPolling() {
+        pollExecutor.submit(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                int[] available = new int[1];
+                // Правильный порядок: канал → массив available
+                if (networking.isP2PPacketAvailable(0, available)) {
+                    ByteBuffer data = ByteBuffer.allocate(available[0]);
+                    SteamID remote = new SteamID();
+                    int len = networking.readP2PPacket(remote, data, 0);
+                    if (len > 0) {
+                        data.position(0);
+                        PacketByteBuf buf = new PacketByteBuf(Unpooled.wrappedBuffer(data.array(), 0, len));
+                        SteamClientConnection conn = connections.get(remote);
+                        if (conn != null) {
+                            conn.handleIncoming(buf);
+                        }
+                    }
+                }
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
-        }
+        });
+    }
+    
+
+    private void createConnectionForPeer(SteamID remote) {
+        SteamClientConnection conn = new SteamClientConnection(remote);
+        connections.put(remote, conn);
     }
 
-    private class SteamUserCallbackAdapter implements SteamUserCallback {
-        @Override
-        public void onValidateAuthTicket(SteamID steamID, SteamAuth.AuthSessionResponse authSessionResponse, SteamID ownerSteamID) {}
-
-        @Override
-        public void onMicroTxnAuthorization(int appID, long orderID, boolean authorized) {}
-
-        @Override
-        public void onEncryptedAppTicket(SteamResult result) {}
+    public void shutdown() {
+        pollExecutor.shutdownNow();
     }
 
-    public static class SteamConnection {
+    // Минимальная заглушка для SteamClientConnection (создай отдельный файл позже)
+    public static class SteamClientConnection {
         private final SteamID remote;
-        private final SteamManager manager;
 
-        public SteamConnection(SteamID remote, SteamManager manager) {
+        public SteamClientConnection(SteamID remote) {
             this.remote = remote;
-            this.manager = manager;
         }
 
-        public void handlePacket(PacketByteBuf buf) {
-            LOGGER.info("Received packet from " + remote + " (" + buf.readableBytes() + " bytes)");
-            // TODO: Dispatch to Minecraft netcode
+        public void handleIncoming(PacketByteBuf buf) {
+            SteamManager.LOGGER.info("Received packet from " + remote + ", size: " + buf.readableBytes());
+            // TODO: здесь будет разбор пакета и передача в Minecraft netcode
         }
+
+        // Добавь позже: send, disconnect и т.д.
+    }
+
+    public SteamID getLobbyID() {
+        return lobbyID;
     }
 }

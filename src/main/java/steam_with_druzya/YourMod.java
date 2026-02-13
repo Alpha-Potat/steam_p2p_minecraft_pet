@@ -2,7 +2,6 @@ package steam_with_druzya;
 
 import com.codedisaster.steamworks.*;
 import com.codedisaster.steamworks.SteamNetworking.P2PSessionError;
-
 import net.fabricmc.api.ModInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,11 +12,9 @@ public class YourMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        SteamManager.INSTANCE.init(networking, null);  // server set later via mixin
         try {
             // Загрузка нативов для LWJGL3 (Minecraft)
             SteamLibraryLoaderLwjgl3 loader = new SteamLibraryLoaderLwjgl3();
-            // Опционально: loader.setLibraryPath("путь_к_бинарникам"); — не нужно, auto
             if (!SteamAPI.loadLibraries(loader)) {
                 LOGGER.error("Failed to load Steam native libraries!");
                 return;
@@ -43,8 +40,10 @@ public class YourMod implements ModInitializer {
                 // Добавь другие @Override если нужно (onP2PConnectionFailWithUser и т.д.)
             });
 
+            // Теперь networking готов - инициализируй SteamManager
+            SteamManager.INSTANCE.init(networking, null);  // server set later via mixin
+
             LOGGER.info("Steam P2P initialized successfully!");
-            // Здесь: SteamManager или lobby init
 
         } catch (SteamException e) {
             LOGGER.error("Steam init exception: ", e);

@@ -5,10 +5,12 @@
 	"mixins": [
 		"ExampleMixin"
 	],
+	"refmap": "steam_p2p.refmap.json",
 	"injectors": {
 		"defaultRequire": 1
 	},
 	"overwrites": {
 		"requireAnnotations": true
 	}
+	
 }

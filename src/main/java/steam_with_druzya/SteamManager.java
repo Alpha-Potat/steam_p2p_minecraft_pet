@@ -2,7 +2,6 @@ package steam_with_druzya;
 
 import com.codedisaster.steamworks.*;
 import com.codedisaster.steamworks.SteamMatchmaking.LobbyType;
-import com.codedisaster.steamworks.SteamNetworking.P2PSend;
 import com.codedisaster.steamworks.SteamNetworking.P2PSessionError;
 import io.netty.buffer.Unpooled;
 import net.minecraft.network.PacketByteBuf;
@@ -17,17 +16,18 @@ import java.util.concurrent.Executors;
 
 public class SteamManager {
     public static final Logger LOGGER = LoggerFactory.getLogger("steam_with_druzya");
+    public static final SteamManager INSTANCE = new SteamManager();
     private SteamNetworking networking;
     private SteamMatchmaking matchmaking;
-    private SteamID lobbyID;  // ID текущего лобби (для хоста)
+    private SteamID lobbyID;
     private final Map<SteamID, SteamClientConnection> connections = new HashMap<>();
     private final ExecutorService pollExecutor = Executors.newSingleThreadExecutor();
 
-    public SteamManager() {  // ← Здесь была ошибка: убрали "steamManager()"
+    public SteamManager() {
         networking = new SteamNetworking(new SteamNetworkingCallback() {
             @Override
             public void onP2PSessionRequest(SteamID steamIDRemote) {
-                LOGGER.info("P2P session request from: " + steamIDRemote);
+                LOGGER.info("P2P session request from: {}", steamIDRemote);
                 networking.acceptP2PSessionWithUser(steamIDRemote);
                 createConnectionForPeer(steamIDRemote);
             }
@@ -43,92 +43,81 @@ public class SteamManager {
             public void onLobbyCreated(SteamResult result, SteamID steamIDLobby) {
                 if (result == SteamResult.OK) {
                     lobbyID = steamIDLobby;
-                    LOGGER.info("Lobby created: " + lobbyID);
+                    LOGGER.info("Lobby created: {}", lobbyID);
                 } else {
-                    LOGGER.error("Lobby creation failed: " + result);
+                    LOGGER.error("Lobby creation failed: {}", result);
                 }
             }
 
-            @Override
-            public void onLobbyEntered(SteamID steamIDLobby, int chatPermissions, boolean blocked, SteamResult response)
-             {
-                LOGGER.info("Joined lobby: " + steamIDLobby + ", success: " + response);
-                // Здесь можно сохранить lobbyID = steamIDLobby; если нужно
-            }
+            
         });
+        
     }
+    public void init(SteamNetworking networking, Object server) {  // Object server - заглушка для mixin
+        this.networking = networking;
+        // Здесь добавьте логику, если нужно (e.g., startPolling() или lobby init)
+        LOGGER.info("SteamManager initialized with networking");
+        this.startPolling();  // Запустите поллинг, если нужно
+    }
+    
 
     public void hostLobby(int maxPlayers) {
-        matchmaking.createLobby(LobbyType.Public, maxPlayers);
+        matchmaking.createLobby(LobbyType.Public, maxPlayers);  // No exception thrown, removed try-catch
     }
 
-    public void joinLobby(long lobbySteamIDLong) {
-        SteamID lobbySteamID = new SteamID().createFromNativeHandle(lobbySteamIDLong);           // Создаём пустой SteamID  // Устанавливаем значение (если метод существует)
-        // Альтернатива, если setFromUInt64 нет: используй matchmaking.joinLobby с уже существующим SteamID из другого источника
-        matchmaking.joinLobby(lobbySteamID);
+    public void joinLobby(long lobbyIDLong) {
+        SteamID lobby = SteamID.createFromNativeHandle(lobbyIDLong);
+        matchmaking.joinLobby(lobby);  // No exception thrown, removed try-catch
     }
 
-    public void sendPacket(SteamID remote, PacketByteBuf buf) throws SteamException {
+    public void sendPacket(SteamID remote, PacketByteBuf buf) {
         byte[] data = new byte[buf.readableBytes()];
         buf.readBytes(data);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(data);
-        networking.sendP2PPacket(remote, byteBuffer, P2PSend.ReliableWithBuffering, 0);
+        ByteBuffer bb = ByteBuffer.wrap(data);
+        try {
+            networking.sendP2PPacket(remote, bb, SteamNetworking.P2PSend.Reliable, 0);
+        } catch (SteamException e) {
+            LOGGER.error("Failed to send P2P packet", e);
+        }
     }
 
     public void startPolling() {
         pollExecutor.submit(() -> {
             while (!Thread.currentThread().isInterrupted()) {
-                int[] available = new int[1];
-                // Правильный порядок: канал → массив available
-                if (networking.isP2PPacketAvailable(0, available)) {
-                    ByteBuffer data = ByteBuffer.allocate(available[0]);
+                int[] msgSize = new int[1];
+                if (networking.isP2PPacketAvailable(0, msgSize)) {
+                    ByteBuffer data = ByteBuffer.allocate(msgSize[0]);
                     SteamID remote = new SteamID();
-                    int len = networking.readP2PPacket(remote, data, 0);
-                    if (len > 0) {
-                        data.position(0);
-                        PacketByteBuf buf = new PacketByteBuf(Unpooled.wrappedBuffer(data.array(), 0, len));
-                        SteamClientConnection conn = connections.get(remote);
-                        if (conn != null) {
-                            conn.handleIncoming(buf);
+                    try {
+                        int bytesRead = networking.readP2PPacket(remote, data, 0);
+                        if (bytesRead > 0) {
+                            data.flip();
+                            PacketByteBuf buf = new PacketByteBuf(Unpooled.wrappedBuffer(data));
+                            SteamClientConnection conn = connections.get(remote);
+                            if (conn != null) {
+                                conn.handleIncoming(buf);
+                            }
                         }
+                    } catch (SteamException e) {
+                        LOGGER.error("P2P read error", e);
                     }
                 }
                 try {
                     Thread.sleep(1);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                } catch (InterruptedException ignored) {}
             }
         });
     }
-    
 
     private void createConnectionForPeer(SteamID remote) {
-        SteamClientConnection conn = new SteamClientConnection(remote);
-        connections.put(remote, conn);
-    }
-
-    public void shutdown() {
-        pollExecutor.shutdownNow();
-    }
-
-    // Минимальная заглушка для SteamClientConnection (создай отдельный файл позже)
-    public static class SteamClientConnection {
-        private final SteamID remote;
-
-        public SteamClientConnection(SteamID remote) {
-            this.remote = remote;
-        }
-
-        public void handleIncoming(PacketByteBuf buf) {
-            SteamManager.LOGGER.info("Received packet from " + remote + ", size: " + buf.readableBytes());
-            // TODO: здесь будет разбор пакета и передача в Minecraft netcode
-        }
-
-        // Добавь позже: send, disconnect и т.д.
+        connections.put(remote, new SteamClientConnection(remote));
     }
 
     public SteamID getLobbyID() {
         return lobbyID;
+    }
+
+    public void shutdown() {
+        pollExecutor.shutdownNow();
     }
 }

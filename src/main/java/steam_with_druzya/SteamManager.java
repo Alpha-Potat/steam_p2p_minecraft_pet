@@ -18,6 +18,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 //ты хуле пиздешь тут дура?
+//маму твою ебу просто
 
 public class SteamManager {
     public static final SteamManager INSTANCE = new SteamManager();
